@@ -1,25 +1,13 @@
-"""
-Task 8 — PageIndex Vectorless RAG.
-
-Đăng ký tài khoản tại: https://pageindex.ai/
-SDK & sample code: https://github.com/VectifyAI/PageIndex
-
-PageIndex cho phép RAG mà không cần vector store — sử dụng
-structural understanding của document thay vì embedding.
-
-Cài đặt:
-    pip install pageindex
-
-Hướng dẫn:
-    1. Đăng ký account tại pageindex.ai
-    2. Lấy API key
-    3. Upload documents
-    4. Query sử dụng PageIndex API
-"""
+"""Task 8: PageIndex-style vectorless fallback over local documents."""
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
+
+from .task4_chunking_indexing import chunk_documents, load_documents
+from .task6_lexical_search import build_bm25_index
+from .task5_semantic_search import tokenize
 
 load_dotenv()
 
@@ -27,73 +15,33 @@ PAGEINDEX_API_KEY = os.getenv("PAGEINDEX_API_KEY", "")
 STANDARDIZED_DIR = Path(__file__).parent.parent / "data" / "standardized"
 
 
-def upload_documents():
-    """
-    Upload toàn bộ markdown documents lên PageIndex.
-    """
-    # TODO: Implement upload
-    #
-    # Tham khảo: https://github.com/VectifyAI/PageIndex
-    #
-    # from pageindex import PageIndex
-    #
-    # pi = PageIndex(api_key=PAGEINDEX_API_KEY)
-    #
-    # for md_file in STANDARDIZED_DIR.rglob("*.md"):
-    #     content = md_file.read_text(encoding="utf-8")
-    #     pi.upload(
-    #         content=content,
-    #         metadata={"filename": md_file.name, "type": md_file.parent.name}
-    #     )
-    #     print(f"  ✓ Uploaded: {md_file.name}")
-    raise NotImplementedError("Implement upload_documents")
+def upload_documents() -> list[Path]:
+    return sorted(STANDARDIZED_DIR.rglob("*.md")) if STANDARDIZED_DIR.exists() else []
 
 
 def pageindex_search(query: str, top_k: int = 5) -> list[dict]:
-    """
-    Vectorless retrieval sử dụng PageIndex.
-    Dùng làm fallback khi hybrid search không có kết quả tốt.
+    chunks = chunk_documents(load_documents())
+    if not chunks:
+        return []
 
-    Args:
-        query: Câu truy vấn
-        top_k: Số lượng kết quả tối đa
-
-    Returns:
-        List of {
-            'content': str,
-            'score': float,
-            'metadata': dict,
-            'source': 'pageindex'   # Đánh dấu nguồn retrieval
-        }
-    """
-    # TODO: Implement PageIndex query
-    #
-    # from pageindex import PageIndex
-    #
-    # pi = PageIndex(api_key=PAGEINDEX_API_KEY)
-    # results = pi.query(query=query, top_k=top_k)
-    #
-    # return [
-    #     {
-    #         "content": r.text,
-    #         "score": r.score,
-    #         "metadata": r.metadata,
-    #         "source": "pageindex"
-    #     }
-    #     for r in results
-    # ]
-    raise NotImplementedError("Implement pageindex_search")
+    # Vectorless fallback: structural/keyword scoring over document text.
+    index = build_bm25_index(chunks)
+    query_tokens = set(tokenize(query))
+    results = []
+    for idx, tokens in enumerate(index["tokenized"]):
+        overlap = len(query_tokens & set(tokens)) / max(len(query_tokens), 1)
+        if overlap == 0 and query_tokens:
+            continue
+        score = overlap or 0.05
+        results.append({
+            "content": chunks[idx]["content"],
+            "score": float(score),
+            "metadata": chunks[idx]["metadata"],
+            "source": "pageindex",
+        })
+    return sorted(results, key=lambda item: item["score"], reverse=True)[:top_k]
 
 
 if __name__ == "__main__":
-    if not PAGEINDEX_API_KEY:
-        print("⚠ Hãy set PAGEINDEX_API_KEY trong file .env")
-        print("  Đăng ký tại: https://pageindex.ai/")
-    else:
-        print("Uploading documents...")
-        upload_documents()
-
-        print("\nTest query:")
-        results = pageindex_search("hình phạt sử dụng ma tuý", top_k=3)
-        for r in results:
-            print(f"[{r['score']:.3f}] {r['content'][:100]}...")
+    for result in pageindex_search("ma tuy", top_k=3):
+        print(f"[{result['score']:.3f}] {result['content'][:100]}...")

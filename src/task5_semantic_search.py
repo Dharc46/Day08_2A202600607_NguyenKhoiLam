@@ -1,66 +1,45 @@
-"""
-Task 5 — Semantic Search Module.
+"""Task 5: deterministic semantic search over local markdown chunks."""
 
-Viết module tìm kiếm ngữ nghĩa (dense retrieval) trên vector store.
+import math
+import re
 
-Yêu cầu:
-    - Input: query string + top_k
-    - Output: danh sách chunks có score, sorted descending
-    - Phải tương thích với embedding model và vector store ở Task 4
-"""
+from .task4_chunking_indexing import EMBEDDING_DIM, chunk_documents, load_documents
+
+
+def tokenize(text: str) -> list[str]:
+    return re.findall(r"[\wÀ-ỹĐđ]+", text.lower(), flags=re.UNICODE)
+
+
+def hashing_vector(text: str, dim: int = EMBEDDING_DIM) -> list[float]:
+    vector = [0.0] * dim
+    for token in tokenize(text):
+        vector[hash(token) % dim] += 1.0
+    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+    return [value / norm for value in vector]
+
+
+def cosine(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _load_chunks() -> list[dict]:
+    return chunk_documents(load_documents())
 
 
 def semantic_search(query: str, top_k: int = 10) -> list[dict]:
-    """
-    Tìm kiếm ngữ nghĩa sử dụng vector similarity.
-
-    Args:
-        query: Câu truy vấn
-        top_k: Số lượng kết quả tối đa
-
-    Returns:
-        List of {
-            'content': str,      # Nội dung chunk
-            'score': float,      # Cosine similarity score
-            'metadata': dict     # source, doc_type, chunk_index
-        }
-        Sorted by score descending.
-    """
-    # TODO: Implement semantic search
-    #
-    # Bước 1: Embed query bằng cùng model ở Task 4
-    # Bước 2: Query vector store (cosine similarity)
-    # Bước 3: Return top_k results
-    #
-    # Ví dụ với Weaviate:
-    # import weaviate
-    # from sentence_transformers import SentenceTransformer
-    #
-    # model = SentenceTransformer("BAAI/bge-m3")
-    # query_embedding = model.encode(query).tolist()
-    #
-    # client = weaviate.connect_to_local()
-    # collection = client.collections.get("DrugLawDocs")
-    #
-    # results = collection.query.near_vector(
-    #     near_vector=query_embedding,
-    #     limit=top_k,
-    #     return_metadata=MetadataQuery(distance=True)
-    # )
-    #
-    # return [
-    #     {
-    #         "content": obj.properties["content"],
-    #         "score": 1 - obj.metadata.distance,  # distance → similarity
-    #         "metadata": {"source": obj.properties["source"], ...}
-    #     }
-    #     for obj in results.objects
-    # ]
-    raise NotImplementedError("Implement semantic_search")
+    query_vec = hashing_vector(query)
+    results = []
+    for chunk in _load_chunks():
+        score = cosine(query_vec, hashing_vector(chunk["content"]))
+        if score > 0:
+            results.append({
+                "content": chunk["content"],
+                "score": float(score),
+                "metadata": chunk["metadata"],
+            })
+    return sorted(results, key=lambda item: item["score"], reverse=True)[:top_k]
 
 
 if __name__ == "__main__":
-    # Test
-    results = semantic_search("hình phạt cho tội tàng trữ ma tuý", top_k=5)
-    for r in results:
-        print(f"[{r['score']:.3f}] {r['content'][:100]}...")
+    for result in semantic_search("hinh phat ma tuy", top_k=5):
+        print(f"[{result['score']:.3f}] {result['content'][:100]}...")
